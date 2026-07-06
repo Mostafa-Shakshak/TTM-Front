@@ -7,14 +7,16 @@ import GroupSettingsModal from './GroupSettingsModal'
 import { chatService } from '../../services/chat.service'
 import { messagesService } from '../../services/messages.service'
 import { uploadsService } from '../../services/uploads.service'
+import { usersService } from '../../services/users.service'
 import { useSocket } from '../../context/SocketContext'
 import { useToast } from '../../context/ToastContext'
 import { getErrorMessage } from '../../utils/errors'
 
-export default function ConversationView({ conversationId, currentUser, onBack, onRemoved, onConversationUpdate }) {
+export default function ConversationView({ conversationId, currentUser, onBack, onRemoved, onConversationUpdate, pendingUserId, onChatCreated }) {
   const { socket, onlineUsers, markConversationRead } = useSocket()
   const { showToast } = useToast()
   const [chat, setChat] = useState(null)
+  const [pendingUser, setPendingUser] = useState(null)
   const [messages, setMessages] = useState([])
   const [content, setContent] = useState('')
   const [image, setImage] = useState('')
@@ -30,14 +32,14 @@ export default function ConversationView({ conversationId, currentUser, onBack, 
     () => chat?.conversation?.find((member) => member.userId !== currentUser.id)?.user,
     [chat, currentUser.id]
   )
-  const identity = chat?.type === 'Group' ? { name: chat.name || 'Group', profileImage: chat.image } : otherUser
+  const identity = pendingUser || (chat?.type === 'Group' ? { name: chat.name || 'Group', profileImage: chat.image } : otherUser)
   const membersByUserId = useMemo(
     () => new Map((chat?.conversation || []).map((member) => [member.userId, member.user])),
     [chat]
   )
 
   const load = useCallback(async () => {
-    if (!conversationId) return
+    if (!conversationId || pendingUserId) return
     setLoading(true)
     try {
       const [chatData, messageData] = await Promise.all([
@@ -55,12 +57,21 @@ export default function ConversationView({ conversationId, currentUser, onBack, 
     } finally {
       setLoading(false)
     }
-  }, [conversationId, currentUser.id, markConversationRead, showToast, socket])
+  }, [conversationId, currentUser.id, markConversationRead, pendingUserId, showToast, socket])
 
   useEffect(() => { load() }, [load])
 
   useEffect(() => {
-    if (!socket || !conversationId) return undefined
+    if (!pendingUserId) { setPendingUser(null); return }
+    setLoading(true)
+    usersService.getProfile(pendingUserId)
+      .then(setPendingUser)
+      .catch(() => showToast('Could not load user.', 'error'))
+      .finally(() => setLoading(false))
+  }, [pendingUserId, showToast])
+
+  useEffect(() => {
+    if (!socket || !conversationId || pendingUserId) return undefined
 
     socket.emit('joinConversation', conversationId)
 
@@ -113,7 +124,7 @@ export default function ConversationView({ conversationId, currentUser, onBack, 
       socket.off('messageSeen', onReceipt)
       socket.off('messageDelivered', onReceipt)
     }
-  }, [socket, conversationId, currentUser.id, markConversationRead, onConversationUpdate])
+  }, [socket, conversationId, currentUser.id, markConversationRead, onConversationUpdate, pendingUserId])
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, typingUsers])
 
@@ -139,22 +150,33 @@ export default function ConversationView({ conversationId, currentUser, onBack, 
     }
     if (!content.trim() && !image) return
     setSending(true)
-    const payload = {
+    const basePayload = {
       content: content.trim() || undefined,
       image: image || undefined,
-      conversationId,
       replyToId: replyTo?.id
     }
     try {
-      if (socket?.connected) socket.emit('sendMessage', payload)
-      else {
-        const message = await messagesService.send(conversationId, payload)
-        setMessages((current) => [...current, message])
+      if (pendingUserId) {
+        const newChat = await chatService.createPrivate(pendingUserId)
+        onChatCreated?.(newChat.id)
+        const payload = { ...basePayload, conversationId: newChat.id }
+        if (socket?.connected) socket.emit('sendMessage', payload)
+        else {
+          const message = await messagesService.send(newChat.id, payload)
+          setMessages((current) => [...current, message])
+        }
+      } else {
+        const payload = { ...basePayload, conversationId }
+        if (socket?.connected) socket.emit('sendMessage', payload)
+        else {
+          const message = await messagesService.send(conversationId, payload)
+          setMessages((current) => [...current, message])
+        }
+        socket?.emit('stopTyping', { conversationId })
       }
       setContent('')
       setImage('')
       setReplyTo(null)
-      socket?.emit('stopTyping', { conversationId })
     } catch (error) {
       showToast(getErrorMessage(error), 'error')
     } finally {
@@ -172,8 +194,8 @@ export default function ConversationView({ conversationId, currentUser, onBack, 
     else messagesService.remove(id).then(() => setMessages((current) => current.filter((item) => item.id !== id)))
   }
 
-  if (!conversationId) return <div className="conversation-empty"><EmptyState icon={Send} title="Choose a conversation" text="Pick someone from your inbox or start a new conversation." /></div>
+  if (!conversationId || (conversationId === 'new' && !pendingUserId)) return <div className="conversation-empty"><EmptyState icon={Send} title="Choose a conversation" text="Pick someone from your inbox or start a new conversation." /></div>
   if (loading) return <div className="conversation-empty"><LoaderCircle className="spin" size={28} /></div>
 
-  return <section className="conversation-view"><header><button className="icon-button conversation-view__back" onClick={onBack}><ArrowLeft size={20} /></button><Avatar user={identity} size="md" /><div><strong>{identity?.name || 'Conversation'}</strong><small>{chat?.blocked ? 'Messaging unavailable' : chat?.type === 'Private' && otherUser ? (onlineUsers.has(otherUser.id) ? 'Online' : `@${otherUser.username}`) : `${chat?.conversation?.length || 0} members`}</small></div><button className="icon-button" onClick={() => setSettingsOpen(true)}><MoreHorizontal size={20} /></button></header><div className="message-list">{messages.map((message) => <MessageBubble key={message.id} message={message} senderUser={membersByUserId.get(message.senderId) || message.sender} own={message.senderId === currentUser.id} onEdit={editMessage} onDelete={deleteMessage} onReply={setReplyTo} />)}{typingUsers.size > 0 && <div className="typing-indicator"><span /><span /><span /></div>}<div ref={bottomRef} /></div>{chat?.blocked ? <div className="message-blocked-notice">{chat.blockMessage || 'You cannot message this user because one of you has blocked the other.'}</div> : <>{replyTo && <div className="message-compose__reply"><Reply size={15} /><span>Replying to {replyTo.sender?.name}: {replyTo.content || 'Image'}</span><button onClick={() => setReplyTo(null)}><X size={15} /></button></div>}{image && <div className="message-compose__image"><img src={image} alt="Ready to send" /><button onClick={() => setImage('')}><X size={15} /></button></div>}<form className="message-compose" onSubmit={send}><input type="file" accept="image/*" ref={imageInput} onChange={uploadImage} hidden /><button type="button" onClick={() => imageInput.current?.click()}><ImagePlus size={20} /></button><input value={content} onChange={(event) => { setContent(event.target.value); socket?.emit(event.target.value ? 'typing' : 'stopTyping', { conversationId }) }} placeholder="Write a message..." /><button className="message-compose__send" disabled={sending || (!content.trim() && !image)}>{sending ? <LoaderCircle className="spin" size={18} /> : <Send size={18} />}</button></form></>}<GroupSettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} chat={chat} currentUserId={currentUser.id} onChanged={load} onRemoved={onRemoved} /></section>
+  return <section className="conversation-view"><header><button className="icon-button conversation-view__back" onClick={onBack}><ArrowLeft size={20} /></button><Avatar user={identity} size="md" /><div><strong>{identity?.name || 'Conversation'}</strong><small>{pendingUser ? `@${pendingUser.username}` : chat?.blocked ? 'Messaging unavailable' : chat?.type === 'Private' && otherUser ? (onlineUsers.has(otherUser.id) ? 'Online' : `@${otherUser.username}`) : `${chat?.conversation?.length || 0} members`}</small></div><button className="icon-button" onClick={() => setSettingsOpen(true)}><MoreHorizontal size={20} /></button></header><div className="message-list">{messages.map((message) => <MessageBubble key={message.id} message={message} senderUser={membersByUserId.get(message.senderId) || message.sender} own={message.senderId === currentUser.id} onEdit={editMessage} onDelete={deleteMessage} onReply={setReplyTo} />)}{typingUsers.size > 0 && <div className="typing-indicator"><span /><span /><span /></div>}<div ref={bottomRef} /></div>{chat?.blocked ? <div className="message-blocked-notice">{chat.blockMessage || 'You cannot message this user because one of you has blocked the other.'}</div> : <>{replyTo && <div className="message-compose__reply"><Reply size={15} /><span>Replying to {replyTo.sender?.name}: {replyTo.content || 'Image'}</span><button onClick={() => setReplyTo(null)}><X size={15} /></button></div>}{image && <div className="message-compose__image"><img src={image} alt="Ready to send" /><button onClick={() => setImage('')}><X size={15} /></button></div>}<form className="message-compose" onSubmit={send}><input type="file" accept="image/*" ref={imageInput} onChange={uploadImage} hidden /><button type="button" onClick={() => imageInput.current?.click()}><ImagePlus size={20} /></button><input value={content} onChange={(event) => { setContent(event.target.value); socket?.emit(event.target.value ? 'typing' : 'stopTyping', { conversationId }) }} placeholder="Write a message..." /><button className="message-compose__send" disabled={sending || (!content.trim() && !image)}>{sending ? <LoaderCircle className="spin" size={18} /> : <Send size={18} />}</button></form></>}<GroupSettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} chat={chat} currentUserId={currentUser.id} onChanged={load} onRemoved={onRemoved} /></section>
 }

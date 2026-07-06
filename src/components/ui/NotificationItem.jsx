@@ -7,6 +7,7 @@ const copy = {
   Like: 'liked your post',
   Comment: 'commented on your post',
   Share: 'shared your post',
+  Follow: 'started following you',
   FollowRequest: 'sent you a follow request',
   FollowAccepted: 'accepted your follow request'
 }
@@ -15,6 +16,7 @@ const icons = {
   Like: Heart,
   Comment: MessageCircle,
   Share: Repeat2,
+  Follow: UserCheck,
   FollowRequest: UserPlus,
   FollowAccepted: UserCheck
 }

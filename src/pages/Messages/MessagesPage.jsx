@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import ChatList from '../../components/ui/ChatList'
 import ConversationView from '../../components/ui/ConversationView'
 import CreateGroupModal from '../../components/ui/CreateGroupModal'
@@ -12,6 +12,8 @@ import { getErrorMessage } from '../../utils/errors'
 
 export default function MessagesPage() {
   const { conversationId } = useParams()
+  const [searchParams] = useSearchParams()
+  const pendingUserId = conversationId === 'new' ? searchParams.get('to') : undefined
   const { user, isDemo } = useAuth()
   const { refreshMessageUnreadCount, messageUnreadByConversation } = useSocket()
   const { showToast } = useToast()
@@ -82,5 +84,5 @@ export default function MessagesPage() {
     }
   }
 
-  return <div className={`messages-page ${conversationId ? 'messages-page--open' : ''}`}><ChatList chats={chats} messageResults={messageResults} currentUserId={user.id} activeId={conversationId} unreadByConversation={messageUnreadByConversation} search={search} onSearch={handleSearch} onSelect={(id) => navigate(`/messages/${id}`)} onCreateGroup={() => setGroupOpen(true)} archived={archived} onToggleArchived={() => setArchived((value) => !value)} onUnarchive={handleUnarchive} unarchivingId={unarchivingId} /><ConversationView conversationId={conversationId} currentUser={user} onBack={() => navigate('/messages')} onRemoved={() => { navigate('/messages'); loadChats(archived); refreshMessageUnreadCount() }} onConversationUpdate={() => { loadChats(archived); refreshMessageUnreadCount() }} /><CreateGroupModal open={groupOpen} onClose={() => setGroupOpen(false)} onCreated={(group) => { loadChats(false); navigate(`/messages/${group.id}`) }} /></div>
+  return <div className={`messages-page ${conversationId ? 'messages-page--open' : ''}`}><ChatList chats={chats} messageResults={messageResults} currentUserId={user.id} activeId={conversationId} unreadByConversation={messageUnreadByConversation} search={search} onSearch={handleSearch} onSelect={(id) => navigate(`/messages/${id}`)} onCreateGroup={() => setGroupOpen(true)} archived={archived} onToggleArchived={() => setArchived((value) => !value)} onUnarchive={handleUnarchive} unarchivingId={unarchivingId} /><ConversationView conversationId={conversationId} currentUser={user} onBack={() => navigate('/messages')} onRemoved={() => { navigate('/messages'); loadChats(archived); refreshMessageUnreadCount() }} onConversationUpdate={() => { loadChats(archived); refreshMessageUnreadCount() }} pendingUserId={pendingUserId} onChatCreated={(chatId) => navigate(`/messages/${chatId}`, { replace: true })} /><CreateGroupModal open={groupOpen} onClose={() => setGroupOpen(false)} onCreated={(group) => { loadChats(false); navigate(`/messages/${group.id}`) }} /></div>
 }

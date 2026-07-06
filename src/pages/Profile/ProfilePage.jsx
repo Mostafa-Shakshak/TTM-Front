@@ -11,7 +11,6 @@ import PostCard from '../../components/ui/PostCard'
 import { useAuth } from '../../context/AuthContext'
 import { useToast } from '../../context/ToastContext'
 import { getDemoProfile } from '../../data/demoData'
-import { chatService } from '../../services/chat.service'
 import { followService } from '../../services/follow.service'
 import { usersService } from '../../services/users.service'
 import { getErrorMessage } from '../../utils/errors'
@@ -83,11 +82,8 @@ export default function ProfilePage() {
     return () => window.removeEventListener('ttm:post-created', addPost)
   }, [isOwner])
 
-  async function startMessage() {
-    try {
-      const chat = await chatService.createPrivate(profile.id)
-      navigate(`/messages/${chat.id}`)
-    } catch (messageError) { showToast(getErrorMessage(messageError), 'error') }
+  function startMessage() {
+    navigate(`/messages/new?to=${profile.id}`)
   }
 
   async function toggleBlock() {
