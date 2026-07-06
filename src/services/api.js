@@ -9,7 +9,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json'
   },
-  timeout: 12000
+  timeout: 12_0000_000
 })
 
 let refreshPromise = null
